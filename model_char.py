@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils import cuda, load_cached_embeddings, load_embeddings
+from utils import cuda, load_cached_embeddings, load_embeddings, Indexer
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 
@@ -59,9 +59,9 @@ class AlignedAttention(nn.Module):
     Returns:
         Attention scores over question sequences, [batch_size, p_len, q_len].
     """
-    def __init__(self, p_dim):
+    def __init__(self, p_dim, c_dim):
         super().__init__()
-        self.linear = nn.Linear(p_dim, p_dim)
+        self.linear = nn.Linear(p_dim + c_dim, p_dim)
         self.relu = nn.ReLU()
 
     def forward(self, p, q, q_mask):
@@ -135,7 +135,7 @@ class BilinearOutput(nn.Module):
         return p_scores  # [batch_size, p_len]
 
 
-class BaselineReader(nn.Module):
+class CharBaselineReader(nn.Module):
     """
     Baseline QA Model
     [Architecture]
@@ -176,8 +176,11 @@ class BaselineReader(nn.Module):
         # Initialize embedding layer (1)
         self.embedding = nn.Embedding(args.vocab_size, args.embedding_dim)
 
+        # Initialize char embedding layer
+        self.char_embedding = nn.Embedding(args.char_vocab_size, args.char_embedding_dim)
+
         # Initialize Context2Query (2)
-        self.aligned_att = AlignedAttention(args.embedding_dim)
+        self.aligned_att = AlignedAttention(args.embedding_dim, args.char_embedding_dim)
 
         rnn_cell = nn.LSTM if args.rnn_cell_type == 'lstm' else nn.GRU
 
@@ -213,6 +216,12 @@ class BaselineReader(nn.Module):
 
         # Initialize bilinear layer for end positions (7)
         self.end_output = BilinearOutput(_hidden_dim, _hidden_dim)
+
+        # Initialize char indexer
+        vocab = [chr(ord('a') + i) for i in range(0, 26)] + [' ']
+        self.char_vocab_index = Indexer()
+        for char in vocab:
+            self.char_vocab_index.add_and_get_index(char)
 
     def load_pretrained_embeddings(self, vocabulary, path):
         """
@@ -261,8 +270,6 @@ class BaselineReader(nn.Module):
 
         return num_pretrained
 
-
-
     def sorted_rnn(self, sequences, sequence_lengths, rnn):
         """
         Sorts and packs inputs, then feeds them into RNN.
@@ -296,7 +303,6 @@ class BaselineReader(nn.Module):
 
     def forward(self, batch):
         # Obtain masks and lengths for passage and question.
-        #print('batch char shape ', batch['char_passages'].shape, ' ', batch['char_questions'].shape)
         passage_mask = (batch['passages'] != self.pad_token_id)  # [batch_size, p_len]
         question_mask = (batch['questions'] != self.pad_token_id)  # [batch_size, q_len]
         passage_lengths = passage_mask.long().sum(-1)  # [batch_size]
@@ -304,13 +310,25 @@ class BaselineReader(nn.Module):
 
         # 1) Embedding Layer: Embed the passage and question.
         passage_embeddings = self.embedding(batch['passages'])  # [batch_size, p_len, p_dim]
-        #print('passage embedding dim, ', passage_embeddings.shape)
         question_embeddings = self.embedding(batch['questions'])  # [batch_size, q_len, q_dim]
+
+        passage_char_embeddings = self.char_embedding(batch['char_passages']) # [batch_size, p_len, word_length, word_dim] [64, 168, 16, 64]
+        question_char_embeddings = self.char_embedding(batch['char_questions']) # [batch_size, q_len, word_length, word_dim]
+
+        # Average char embeddings baseline
+        passage_char_embeddings_avg = passage_char_embeddings.mean(dim=2).squeeze(0)
+        question_char_embeddings_avg = question_char_embeddings.mean(dim=2).squeeze(0)
+
+        passage_final_embeddings = torch.cat([passage_embeddings, passage_char_embeddings_avg], dim=2)
+        question_final_embeddings = torch.cat([question_embeddings, question_char_embeddings_avg], dim=2)
+        #print('passage_char_embeddings ', passage_char_embeddings.shape)
+        #print('question_char_embeddings ', question_char_embeddings.shape)
+
 
         # 2) Context2Query: Compute weighted sum of question embeddings for
         #        each passage word and concatenate with passage embeddings.
         aligned_scores = self.aligned_att(
-            passage_embeddings, question_embeddings, ~question_mask
+            passage_final_embeddings, question_final_embeddings, ~question_mask
         )  # [batch_size, p_len, q_len]
         aligned_embeddings = aligned_scores.bmm(question_embeddings)  # [batch_size, p_len, q_dim]
         passage_embeddings = cuda(

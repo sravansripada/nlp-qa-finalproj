@@ -10,7 +10,7 @@ import torch
 
 from torch.utils.data import Dataset
 from random import shuffle
-from utils import cuda, load_dataset
+from utils import cuda, load_dataset, Indexer
 
 
 PAD_TOKEN = '[PAD]'
@@ -120,6 +120,35 @@ class Tokenizer:
         ]
 
 
+class CharTokenizer:
+    """
+    Class to create char tokens
+    """
+
+    def __init__(self, max_word_length):
+        vocab = [chr(ord('a') + i) for i in range(0, 26)] + [' ']
+        self.char_vocab_index = Indexer()
+        self.char_vocab_index.add_and_get_index(PAD_TOKEN) # PAD is 0
+        self.char_vocab_index.add_and_get_index(UNK_TOKEN) # Unknown token is 1
+        for char in vocab:
+            self.char_vocab_index.add_and_get_index(char)
+
+        self.max_word_length = max_word_length
+
+    def convert_words_to_charids(self, words):
+        word_charids = []
+        for w in words:
+            charids = []
+            for c in w:
+                charids.append(self.char_vocab_index.index_of(c))
+            charids = charids[:self.max_word_length]
+            if len(charids) < self.max_word_length:
+                charids.extend([0]*(self.max_word_length - len(charids)))
+            word_charids.append(charids)
+
+        return word_charids
+
+
 class QADataset(Dataset):
     """
     This class creates a data generator.
@@ -145,6 +174,9 @@ class QADataset(Dataset):
         self.batch_size = args.batch_size if 'batch_size' in args else 1
         self.pad_token_id = self.tokenizer.pad_token_id \
             if self.tokenizer is not None else 0
+        self.char_tokenizer = CharTokenizer(args.max_word_length)
+
+
 
     def _create_samples(self):
         """
@@ -160,6 +192,7 @@ class QADataset(Dataset):
             passage = [
                 token.lower() for (token, offset) in elem['context_tokens']
             ][:self.args.max_context_length]
+            #print('passage is ', passage)
 
             # Each passage has several questions associated with it.
             # Additionally, each question has multiple possible answer spans.
@@ -200,12 +233,18 @@ class QADataset(Dataset):
             shuffle(example_idxs)
 
         passages = []
+        char_passages = []
         questions = []
+        char_questions = []
         start_positions = []
         end_positions = []
         for idx in example_idxs:
             # Unpack QA sample and tokenize passage/question.
             qid, passage, question, answer_start, answer_end = self.samples[idx]
+
+            # Convert words to chars and then to tensors
+            char_passage_ids = torch.tensor(self.char_tokenizer.convert_words_to_charids(passage))
+            char_question_ids = torch.tensor(self.char_tokenizer.convert_words_to_charids(question))
 
             # Convert words to tensor.
             passage_ids = torch.tensor(
@@ -219,11 +258,13 @@ class QADataset(Dataset):
 
             # Store each part in an independent list.
             passages.append(passage_ids)
+            char_passages.append(char_passage_ids)
             questions.append(question_ids)
+            char_questions.append(char_question_ids)
             start_positions.append(answer_start_ids)
             end_positions.append(answer_end_ids)
 
-        return zip(passages, questions, start_positions, end_positions)
+        return zip(passages, questions, start_positions, end_positions, char_passages, char_questions)
 
     def _create_batches(self, generator, batch_size):
         """
@@ -256,14 +297,19 @@ class QADataset(Dataset):
 
             passages = []
             questions = []
+            char_passages = []
+            char_questions = []
             start_positions = torch.zeros(bsz)
             end_positions = torch.zeros(bsz)
             max_passage_length = 0
             max_question_length = 0
+            max_word_length = self.args.max_word_length
             # Check max lengths for both passages and questions
             for ii in range(bsz):
                 passages.append(current_batch[ii][0])
                 questions.append(current_batch[ii][1])
+                char_passages.append(current_batch[ii][4])
+                char_questions.append(current_batch[ii][5])
                 start_positions[ii] = current_batch[ii][2]
                 end_positions[ii] = current_batch[ii][3]
                 max_passage_length = max(
@@ -277,18 +323,31 @@ class QADataset(Dataset):
             # index is other than 0.
             padded_passages = torch.zeros(bsz, max_passage_length)
             padded_questions = torch.zeros(bsz, max_question_length)
+
+            padded_char_passages = torch.zeros(bsz, max_passage_length, max_word_length)
+            padded_char_questions = torch.zeros(bsz, max_question_length, max_word_length)
             # Pad passages and questions
             for iii, passage_question in enumerate(zip(passages, questions)):
                 passage, question = passage_question
                 padded_passages[iii][:len(passage)] = passage
                 padded_questions[iii][:len(question)] = question
 
+            for iii in range(len(char_passages)):
+                for jjj in range(len(char_passages[iii])):
+                    padded_char_passages[iii][jjj][:max_word_length] = char_passages[iii][jjj]
+
+            for iii in range(len(char_questions)):
+                for jjj in range(len(char_questions[iii])):
+                    padded_char_questions[iii][jjj][:max_word_length] = char_questions[iii][jjj]
+
             # Create an input dictionary
             batch_dict = {
                 'passages': cuda(self.args, padded_passages).long(),
                 'questions': cuda(self.args, padded_questions).long(),
                 'start_positions': cuda(self.args, start_positions).long(),
-                'end_positions': cuda(self.args, end_positions).long()
+                'end_positions': cuda(self.args, end_positions).long(),
+                'char_passages': cuda(self.args, padded_char_passages).long(),
+                'char_questions': cuda(self.args, padded_char_questions).long(),
             }
 
             if no_more_data:
