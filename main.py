@@ -69,6 +69,18 @@ parser.add_argument(
     help='path to load/save model checkpoints',
 )
 parser.add_argument(
+    '--embedding',
+    choices=['fasttext', 'glove'],
+    default='glove',
+    help='Type of word embedding',
+)
+parser.add_argument(
+    '--char_embedding_type',
+    choices=['conv', 'average'],
+    default='conv',
+    help='Type of char embeddings integration',
+)
+parser.add_argument(
     '--embedding_path',
     type=str,
     default='glove/glove.6B.300d.txt',# 'fasttext/cc.en.300.bin',#

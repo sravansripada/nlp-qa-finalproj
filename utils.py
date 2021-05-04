@@ -104,11 +104,12 @@ def load_embeddings(path):
                 pass
     return embedding_map
 
-#     # Fasttext
-#     import fasttext
-#     ft = fasttext.load_model('cc.en.300.bin')
-#     return ft
 
+def load_fasttext_embeddings(path):
+    # Fasttext
+    import fasttext
+    ft = fasttext.load_model(path)
+    return ft
 
 
 def search_span_endpoints(start_probs, end_probs, window=15):

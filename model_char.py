@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils import cuda, load_cached_embeddings, load_embeddings, Indexer
+from utils import cuda, load_cached_embeddings, load_embeddings, Indexer, load_fasttext_embeddings
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 
@@ -231,42 +231,44 @@ class CharBaselineReader(nn.Module):
             vocabulary: `Vocabulary` object.
             path: Embedding path, e.g. "glove/glove.6B.300d.txt".
         """
-        embedding_map = load_cached_embeddings(path)
-        
-        # Create embedding matrix. By default, embeddings are randomly
-        # initialized from Uniform(-0.1, 0.1).
-        embeddings = torch.zeros(
-            (len(vocabulary), self.args.embedding_dim)
-        ).uniform_(-0.1, 0.1)
-        
-        # Initialize pre-trained embeddings.
-        num_pretrained = 0
-        for (i, word) in enumerate(vocabulary.words):
-            if word in embedding_map:
-                #embeddings[i] = torch.tensor(embedding_map[word])
+
+        if self.args.embedding == 'glove':
+            embedding_map = load_cached_embeddings(path)
+
+            # Create embedding matrix. By default, embeddings are randomly
+            # initialized from Uniform(-0.1, 0.1).
+            embeddings = torch.zeros(
+                (len(vocabulary), self.args.embedding_dim)
+            ).uniform_(-0.1, 0.1)
+
+            # Initialize pre-trained embeddings.
+            num_pretrained = 0
+            for (i, word) in enumerate(vocabulary.words):
+                if word in embedding_map:
+                    #embeddings[i] = torch.tensor(embedding_map[word])
+                    num_pretrained += 1
+
+            # Place embedding matrix on GPU.
+            self.embedding.weight.data = cuda(self.args, embeddings)
+        else:
+            #####################
+            # Loads Fasttext embeddings
+            embedding_map = load_fasttext_embeddings(path)
+
+            # Create embedding matrix. By default, embeddings are randomly
+            # initialized from Uniform(-0.1, 0.1).
+            embeddings = torch.zeros(
+                (len(vocabulary), self.args.embedding_dim)
+            ).uniform_(-0.1, 0.1)
+
+            # Initialize pre-trained embeddings.
+            num_pretrained = 0
+            for (i, word) in enumerate(vocabulary.words):
+                embeddings[i] = torch.tensor(embedding_map.get_word_vector(word))
                 num_pretrained += 1
-        
-        # Place embedding matrix on GPU.
-        self.embedding.weight.data = cuda(self.args, embeddings)
 
-#         #####################
-#         # Loads Fasttext embeddings
-#         embedding_map = load_embeddings(path)
-
-#         # Create embedding matrix. By default, embeddings are randomly
-#         # initialized from Uniform(-0.1, 0.1).
-#         embeddings = torch.zeros(
-#             (len(vocabulary), self.args.embedding_dim)
-#         ).uniform_(-0.1, 0.1)
-
-#         # Initialize pre-trained embeddings.
-#         num_pretrained = 0
-#         for (i, word) in enumerate(vocabulary.words):
-#             embeddings[i] = torch.tensor(embedding_map.get_word_vector(word))
-#             num_pretrained += 1
-
-#         # Place embedding matrix on GPU.
-#         self.embedding.weight.data = cuda(self.args, embeddings)
+            # Place embedding matrix on GPU.
+            self.embedding.weight.data = cuda(self.args, embeddings)
 
         return num_pretrained
 
@@ -315,15 +317,36 @@ class CharBaselineReader(nn.Module):
         passage_char_embeddings = self.char_embedding(batch['char_passages']) # [batch_size, p_len, word_length, word_dim] [64, 168, 16, 64]
         question_char_embeddings = self.char_embedding(batch['char_questions']) # [batch_size, q_len, word_length, word_dim]
 
-        # Average char embeddings baseline
-        passage_char_embeddings_avg = passage_char_embeddings.mean(dim=2).squeeze(0)
-        question_char_embeddings_avg = question_char_embeddings.mean(dim=2).squeeze(0)
+        if self.args.char_embedding_type == 'average':
+            # Average char embeddings baseline
+            passage_char_embeddings_avg = passage_char_embeddings.mean(dim=2).squeeze(0)
+            question_char_embeddings_avg = question_char_embeddings.mean(dim=2).squeeze(0)
 
-        passage_final_embeddings = torch.cat([passage_embeddings, passage_char_embeddings_avg], dim=2)
-        question_final_embeddings = torch.cat([question_embeddings, question_char_embeddings_avg], dim=2)
-        #print('passage_char_embeddings ', passage_char_embeddings.shape)
-        #print('question_char_embeddings ', question_char_embeddings.shape)
+            passage_final_embeddings = torch.cat([passage_embeddings, passage_char_embeddings_avg], dim=2)
+            question_final_embeddings = torch.cat([question_embeddings, question_char_embeddings_avg], dim=2)
+            #print('passage_char_embeddings ', passage_char_embeddings.shape)
+            #print('question_char_embeddings ', question_char_embeddings.shape)
 
+        else:
+            # Conv 1D char embeddings
+            passage_char_embeddings_conv1d_input = passage_char_embeddings.reshape((-1, passage_char_embeddings.shape[3], passage_char_embeddings.shape[2]))
+            question_char_embeddings_conv1d_input = question_char_embeddings.reshape(
+                (-1, question_char_embeddings.shape[3], question_char_embeddings.shape[2]))
+
+            conv1d = torch.nn.Conv1d(self.args.char_embedding_dim, self.args.char_embedding_dim, 3)
+
+            passage_char_embeddings_tmp1 = torch.nn.functional.relu(conv1d(passage_char_embeddings_conv1d_input))
+            # Last dimension of conv1d output we want to collapse using global max pooling
+            passage_char_embeddings_final = torch.nn.functional.max_pool1d(passage_char_embeddings_tmp1, passage_char_embeddings_tmp1.shape[2]).squeeze(2).reshape(passage_char_embeddings.shape[0], passage_char_embeddings.shape[1], -1)
+
+            question_char_embeddings_tmp1 = torch.nn.functional.relu(conv1d(question_char_embeddings_conv1d_input))
+            # Last dimension of conv1d output we want to collapse using global max pooling
+            question_char_embeddings_final = torch.nn.functional.max_pool1d(question_char_embeddings_tmp1,
+                                                                           question_char_embeddings_tmp1.shape[2]).squeeze(
+                2).reshape(question_char_embeddings.shape[0], question_char_embeddings.shape[1], -1)
+
+            passage_final_embeddings = torch.cat([passage_embeddings, passage_char_embeddings_final], dim=2)
+            question_final_embeddings = torch.cat([question_embeddings, question_char_embeddings_final], dim=2)
 
         # 2) Context2Query: Compute weighted sum of question embeddings for
         #        each passage word and concatenate with passage embeddings.
