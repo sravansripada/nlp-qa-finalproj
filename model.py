@@ -222,42 +222,42 @@ class BaselineReader(nn.Module):
             vocabulary: `Vocabulary` object.
             path: Embedding path, e.g. "glove/glove.6B.300d.txt".
         """
-        # embedding_map = load_cached_embeddings(path)
-        #
-        # # Create embedding matrix. By default, embeddings are randomly
-        # # initialized from Uniform(-0.1, 0.1).
-        # embeddings = torch.zeros(
-        #     (len(vocabulary), self.args.embedding_dim)
-        # ).uniform_(-0.1, 0.1)
-        #
-        # # Initialize pre-trained embeddings.
-        # num_pretrained = 0
-        # for (i, word) in enumerate(vocabulary.words):
-        #     if word in embedding_map:
-        #         #embeddings[i] = torch.tensor(embedding_map[word])
-        #         num_pretrained += 1
-        #
-        # # Place embedding matrix on GPU.
-        # self.embedding.weight.data = cuda(self.args, embeddings)
-
-        #####################
-        # Loads Fasttext embeddings
-        embedding_map = load_embeddings(path)
-
+        embedding_map = load_cached_embeddings(path)
+        
         # Create embedding matrix. By default, embeddings are randomly
         # initialized from Uniform(-0.1, 0.1).
         embeddings = torch.zeros(
             (len(vocabulary), self.args.embedding_dim)
         ).uniform_(-0.1, 0.1)
-
+        
         # Initialize pre-trained embeddings.
         num_pretrained = 0
         for (i, word) in enumerate(vocabulary.words):
-            embeddings[i] = torch.tensor(embedding_map.get_word_vector(word))
-            num_pretrained += 1
-
+            if word in embedding_map:
+                #embeddings[i] = torch.tensor(embedding_map[word])
+                num_pretrained += 1
+        
         # Place embedding matrix on GPU.
         self.embedding.weight.data = cuda(self.args, embeddings)
+
+#         #####################
+#         # Loads Fasttext embeddings
+#         embedding_map = load_embeddings(path)
+
+#         # Create embedding matrix. By default, embeddings are randomly
+#         # initialized from Uniform(-0.1, 0.1).
+#         embeddings = torch.zeros(
+#             (len(vocabulary), self.args.embedding_dim)
+#         ).uniform_(-0.1, 0.1)
+
+#         # Initialize pre-trained embeddings.
+#         num_pretrained = 0
+#         for (i, word) in enumerate(vocabulary.words):
+#             embeddings[i] = torch.tensor(embedding_map.get_word_vector(word))
+#             num_pretrained += 1
+
+#         # Place embedding matrix on GPU.
+#         self.embedding.weight.data = cuda(self.args, embeddings)
 
         return num_pretrained
 

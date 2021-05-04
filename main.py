@@ -71,8 +71,8 @@ parser.add_argument(
 parser.add_argument(
     '--embedding_path',
     type=str,
-    default='fasttext/cc.en.300.bin',#'glove/glove.6B.300d.txt',
-    help='Fasttext embedding path', #'GloVe embedding path',
+    default='glove/glove.6B.300d.txt',# 'fasttext/cc.en.300.bin',#
+    help='Glove embedding path', #'GloVe embedding path',
 )
 parser.add_argument(
     '--train_path',

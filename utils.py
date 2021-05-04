@@ -93,21 +93,21 @@ def load_embeddings(path):
     Returns:
         Dictionary mapping words (strings) to vectors (list of floats).
     """
-    # embedding_map = {}
-    # with open(path) as f:
-    #     next(f)  # Skip header.
-    #     for line in f:
-    #         try:
-    #             pieces = line.rstrip().split()
-    #             embedding_map[pieces[0]] = [float(weight) for weight in pieces[1:]]
-    #         except:
-    #             pass
-    # return embedding_map
+    embedding_map = {}
+    with open(path) as f:
+        next(f)  # Skip header.
+        for line in f:
+            try:
+                pieces = line.rstrip().split()
+                embedding_map[pieces[0]] = [float(weight) for weight in pieces[1:]]
+            except:
+                pass
+    return embedding_map
 
-    # Fasttext
-    import fasttext
-    ft = fasttext.load_model('cc.en.300.bin')
-    return ft
+#     # Fasttext
+#     import fasttext
+#     ft = fasttext.load_model('cc.en.300.bin')
+#     return ft
 
 
 
