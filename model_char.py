@@ -332,14 +332,19 @@ class CharBaselineReader(nn.Module):
             passage_char_embeddings_conv1d_input = passage_char_embeddings.reshape((-1, passage_char_embeddings.shape[3], passage_char_embeddings.shape[2]))
             question_char_embeddings_conv1d_input = question_char_embeddings.reshape(
                 (-1, question_char_embeddings.shape[3], question_char_embeddings.shape[2]))
-
+            
             conv1d = torch.nn.Conv1d(self.args.char_embedding_dim, self.args.char_embedding_dim, 3)
+            relu = torch.nn.ReLU()
+            
+            if torch.cuda.is_available():
+                conv1d.cuda()
+                relu.cuda()
 
-            passage_char_embeddings_tmp1 = torch.nn.functional.relu(conv1d(passage_char_embeddings_conv1d_input))
+            passage_char_embeddings_tmp1 = relu(conv1d(passage_char_embeddings_conv1d_input))
             # Last dimension of conv1d output we want to collapse using global max pooling
             passage_char_embeddings_final = torch.nn.functional.max_pool1d(passage_char_embeddings_tmp1, passage_char_embeddings_tmp1.shape[2]).squeeze(2).reshape(passage_char_embeddings.shape[0], passage_char_embeddings.shape[1], -1)
 
-            question_char_embeddings_tmp1 = torch.nn.functional.relu(conv1d(question_char_embeddings_conv1d_input))
+            question_char_embeddings_tmp1 = relu(conv1d(question_char_embeddings_conv1d_input))
             # Last dimension of conv1d output we want to collapse using global max pooling
             question_char_embeddings_final = torch.nn.functional.max_pool1d(question_char_embeddings_tmp1,
                                                                            question_char_embeddings_tmp1.shape[2]).squeeze(

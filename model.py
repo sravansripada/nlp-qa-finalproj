@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils import cuda, load_cached_embeddings, load_embeddings
+from utils import cuda, load_cached_embeddings, load_embeddings, load_fasttext_embeddings
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 
@@ -169,7 +169,7 @@ class BaselineReader(nn.Module):
     """
     def __init__(self, args):
         super().__init__()
-
+        print('Executing Baseline Model')
         self.args = args
         self.pad_token_id = args.pad_token_id
 
@@ -222,44 +222,49 @@ class BaselineReader(nn.Module):
             vocabulary: `Vocabulary` object.
             path: Embedding path, e.g. "glove/glove.6B.300d.txt".
         """
-        embedding_map = load_cached_embeddings(path)
+
+        if self.args.embedding == 'glove':
+            embedding_map = load_cached_embeddings(path)
+
+            # Create embedding matrix. By default, embeddings are randomly
+            # initialized from Uniform(-0.1, 0.1).
+            embeddings = torch.zeros(
+                (len(vocabulary), self.args.embedding_dim)
+            ).uniform_(-0.1, 0.1)
+
+            # Initialize pre-trained embeddings.
+            num_pretrained = 0
+            for (i, word) in enumerate(vocabulary.words):
+                if word in embedding_map:
+                    #embeddings[i] = torch.tensor(embedding_map[word])
+                    num_pretrained += 1
+
+            # Place embedding matrix on GPU.
+            self.embedding.weight.data = cuda(self.args, embeddings)
+            
+            return num_pretrained
         
-        # Create embedding matrix. By default, embeddings are randomly
-        # initialized from Uniform(-0.1, 0.1).
-        embeddings = torch.zeros(
-            (len(vocabulary), self.args.embedding_dim)
-        ).uniform_(-0.1, 0.1)
-        
-        # Initialize pre-trained embeddings.
-        num_pretrained = 0
-        for (i, word) in enumerate(vocabulary.words):
-            if word in embedding_map:
-                #embeddings[i] = torch.tensor(embedding_map[word])
+        else:
+            #####################
+            # Loads Fasttext embeddings
+            embedding_map = load_fasttext_embeddings(path)
+
+            # Create embedding matrix. By default, embeddings are randomly
+            # initialized from Uniform(-0.1, 0.1).
+            embeddings = torch.zeros(
+                (len(vocabulary), self.args.embedding_dim)
+            ).uniform_(-0.1, 0.1)
+
+            # Initialize pre-trained embeddings.
+            num_pretrained = 0
+            for (i, word) in enumerate(vocabulary.words):
+                embeddings[i] = torch.tensor(embedding_map.get_word_vector(word))
                 num_pretrained += 1
-        
-        # Place embedding matrix on GPU.
-        self.embedding.weight.data = cuda(self.args, embeddings)
 
-#         #####################
-#         # Loads Fasttext embeddings
-#         embedding_map = load_embeddings(path)
+            # Place embedding matrix on GPU.
+            self.embedding.weight.data = cuda(self.args, embeddings)
 
-#         # Create embedding matrix. By default, embeddings are randomly
-#         # initialized from Uniform(-0.1, 0.1).
-#         embeddings = torch.zeros(
-#             (len(vocabulary), self.args.embedding_dim)
-#         ).uniform_(-0.1, 0.1)
-
-#         # Initialize pre-trained embeddings.
-#         num_pretrained = 0
-#         for (i, word) in enumerate(vocabulary.words):
-#             embeddings[i] = torch.tensor(embedding_map.get_word_vector(word))
-#             num_pretrained += 1
-
-#         # Place embedding matrix on GPU.
-#         self.embedding.weight.data = cuda(self.args, embeddings)
-
-        return num_pretrained
+            return num_pretrained
 
 
 
